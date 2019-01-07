@@ -1,0 +1,2 @@
+# HKCore
+Housekeeper .NET Core
