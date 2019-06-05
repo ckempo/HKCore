@@ -15,6 +15,7 @@ namespace HKCore
     {
         static int totalFilesCount = 0;
         static int totalDirsCount = 0;
+        static bool isSimulation = false;
 
         static void Main(string[] args)
         {
@@ -26,6 +27,7 @@ namespace HKCore
             var config = configBuilder.Build();
 
             var appConfig = config.GetSection("application").Get<Application>();
+            isSimulation = appConfig.SimulationMode;
 
             foreach (DirectoryConfig dirConfig in appConfig.DirectoryConfig)
             {
@@ -76,7 +78,11 @@ namespace HKCore
                 //Don't leave behind empty dirs if configured to remove them
                 if (Directory.GetFileSystemEntries(dir.FullName).Length == 0 && removeEmptyDirs)
                 {
-                    //Directory.Delete(dir.FullName);
+                    if (!isSimulation)
+                    {
+                        Directory.Delete(dir.FullName);
+                    }
+
                     Console.WriteLine("Deleting directory {0}", dir.FullName);
                     Interlocked.Increment(ref delDirsCount);
                     Interlocked.Increment(ref totalDirsCount);
@@ -89,7 +95,11 @@ namespace HKCore
                 {
                     try
                     {
-                        //file.Delete();
+                        if (!isSimulation)
+                        {
+                            file.Delete();
+                        }
+
                         Console.WriteLine("Deleting {0}", file.FullName);
                         Interlocked.Increment(ref delFilesCount);
                         Interlocked.Increment(ref totalFilesCount);
