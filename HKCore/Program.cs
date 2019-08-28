@@ -1,127 +1,145 @@
 ﻿using System;
-using System.IO;
-using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.Configuration.Binder;
-using Microsoft.Extensions.Configuration.FileExtensions;
-using Microsoft.Extensions.Configuration.Json;
-using System.Collections.Generic;
 using System.Diagnostics;
-using System.Threading.Tasks;
+using System.IO;
+using System.Text;
 using System.Threading;
+using System.Threading.Tasks;
+using Microsoft.Extensions.Configuration;
 
 namespace HKCore
 {
-    class Program
-    {
-        static int totalFilesCount = 0;
-        static int totalDirsCount = 0;
-        static bool isSimulation = false;
+	internal class Program
+	{
+		private static int totalFilesCount = 0;
+		private static int totalDirsCount = 0;
+		private static bool isSimulation = false;
 
-        static void Main(string[] args)
-        {
-            const string CONFIGFILE = "appsettings.json";
-            var configBuilder = new ConfigurationBuilder()
-                .SetBasePath(Directory.GetCurrentDirectory())
-                .AddJsonFile(CONFIGFILE);
+		private static void Main(string[] args)
+		{
+			const string CONFIGFILE = "appsettings.json";
+			IConfigurationBuilder configBuilder = new ConfigurationBuilder()
+				.SetBasePath(Directory.GetCurrentDirectory())
+				.AddJsonFile(CONFIGFILE);
 
-            var config = configBuilder.Build();
+			IConfigurationRoot config = configBuilder.Build();
 
-            var appConfig = config.GetSection("application").Get<Application>();
-            isSimulation = appConfig.SimulationMode;
+			Application appConfig = config.GetSection("application").Get<Application>();
+			isSimulation = appConfig.SimulationMode;
 
-            foreach (DirectoryConfig dirConfig in appConfig.DirectoryConfig)
-            {
-                int fileCount = 0;
-                int dirCount = 0;
+			if (isSimulation)
+			{
+				Console.WriteLine("Simulation mode is ENABLED; nothing will be deleted.");
+			}
 
-                Debug.WriteLine(string.Format("Reading config for {0}", dirConfig.ConfigName));
+			var stopwatch = new Stopwatch();
+			stopwatch.Start();
 
-                // Process each directory in config
-                var counter = ProcessDir(dirConfig);
-                fileCount += counter.RemovedFilesCount;
-                dirCount += counter.RemovedDirsCount;
+			Parallel.ForEach<DirectoryConfig>(appConfig.DirectoryConfig, dirConfig =>
+			{
+				var logger = new StringBuilder();
+				var fileCount = 0;
+				var dirCount = 0;
 
-                // Report totals  
-                Console.WriteLine("Completed processing {0}:", dirConfig.ConfigName);
-                Console.WriteLine("{0} files removed", fileCount.ToString());
-                Console.WriteLine("{0} directories removed", dirCount.ToString());
-            }
+				var configStopwatch = new Stopwatch();
+				configStopwatch.Start();
 
-            Console.WriteLine("Completed processing - total deletions:");
-            Console.WriteLine("     {0} files removed ", totalFilesCount);
-            Console.WriteLine("     {0} directories removed", totalDirsCount);
-        }
+				logger.AppendLine($"Reading config for {dirConfig.ConfigName}");
 
-        static ProcessDirResult ProcessDir(DirectoryConfig dirConf)
-        {
-            var result = ProcessDir(dirConf.Path,
-                       dirConf.Mask,
-                       dirConf.DaysToKeep,
-                       dirConf.IncludeSubDirs,
-                       dirConf.RemoveEmptyDirs);
+				// Process each directory in config
+				ProcessDirResult counter = ProcessDir(dirConfig, logger);
+				fileCount += counter.RemovedFilesCount;
+				dirCount += counter.RemovedDirsCount;
 
-            return result;
-        }
-        static ProcessDirResult ProcessDir(string dirPath, string mask, int daysToKeep, bool doSubDirs, bool removeEmptyDirs)
-        {
-            int delFilesCount = 0;
-            int delDirsCount = 0;
-            DateTime nowDate = DateTime.Now;
-            DirectoryInfo di = new DirectoryInfo(dirPath);
+				configStopwatch.Stop();
 
-            Parallel.ForEach(di.GetDirectories(), dir =>
-            {
-                var result = ProcessDir(dir.FullName, mask, daysToKeep, doSubDirs, removeEmptyDirs);
-                Interlocked.Add(ref delFilesCount, result.RemovedFilesCount);
-                Interlocked.Add(ref delDirsCount, result.RemovedDirsCount);
+				// Report totals
+				logger.AppendLine($"Completed processing {dirConfig.ConfigName}:");
+				logger.AppendLine($"{fileCount.ToString()} files removed");
+				logger.AppendLine($"{dirCount.ToString()} directories removed");
+				logger.AppendLine($"Took {configStopwatch.Elapsed.Seconds.ToString()} seconds");
 
-                //Don't leave behind empty dirs if configured to remove them
-                if (Directory.GetFileSystemEntries(dir.FullName).Length == 0 && removeEmptyDirs)
-                {
-                    if (!isSimulation)
-                    {
-                        Directory.Delete(dir.FullName);
-                    }
+				Console.WriteLine(logger.ToString());
+			});
 
-                    Console.WriteLine("Deleting directory {0}", dir.FullName);
-                    Interlocked.Increment(ref delDirsCount);
-                    Interlocked.Increment(ref totalDirsCount);
-                }
-            });
+			stopwatch.Stop();
+			Console.WriteLine("Completed processing - total deletions:");
+			Console.WriteLine("     {0} files removed ", totalFilesCount);
+			Console.WriteLine("     {0} directories removed", totalDirsCount);
+			Console.WriteLine("     Took {0} seconds", stopwatch.Elapsed.Seconds.ToString());
+		}
 
-            foreach (var file in di.EnumerateFiles(mask, SearchOption.AllDirectories))
-            {
-                if (file.LastWriteTime.Date < nowDate.Date)
-                {
-                    try
-                    {
-                        if (!isSimulation)
-                        {
-                            file.Delete();
-                        }
+		private static ProcessDirResult ProcessDir(DirectoryConfig dirConf, StringBuilder logger)
+		{
+			ProcessDirResult result = ProcessDir(dirConf.Path,
+					   dirConf.Mask,
+					   dirConf.DaysToKeep,
+					   dirConf.IncludeSubDirs,
+					   dirConf.RemoveEmptyDirs,
+					   logger);
 
-                        Console.WriteLine("Deleting {0}", file.FullName);
-                        Interlocked.Increment(ref delFilesCount);
-                        Interlocked.Increment(ref totalFilesCount);
-                    }
-                    catch (System.IO.IOException ex)
-                    {
-                        Console.WriteLine("IOException: {0}", ex);
-                    }
-                    catch (Exception ex)
-                    {
-                        Console.WriteLine("Unhandled Exception: {0}", ex);
-                    }
-                }
-            }
+			return result;
+		}
 
-            return new ProcessDirResult { RemovedFilesCount = delDirsCount, RemovedDirsCount = delDirsCount };
-        }
-    }
+		private static ProcessDirResult ProcessDir(string dirPath, string mask, int daysToKeep, bool doSubDirs, bool removeEmptyDirs, StringBuilder logger)
+		{
+			var delFilesCount = 0;
+			var delDirsCount = 0;
+			DateTime nowDate = DateTime.Now;
+			var di = new DirectoryInfo(dirPath);
 
-    public class ProcessDirResult
-    {
-        public int RemovedFilesCount { get; set; }
-        public int RemovedDirsCount { get; set; }
-    }
+			Parallel.ForEach(di.GetDirectories(), dir =>
+			{
+				ProcessDirResult result = ProcessDir(dir.FullName, mask, daysToKeep, doSubDirs, removeEmptyDirs, logger);
+				Interlocked.Add(ref delFilesCount, result.RemovedFilesCount);
+				Interlocked.Add(ref delDirsCount, result.RemovedDirsCount);
+
+				//Don't leave behind empty dirs if configured to remove them
+				if (Directory.GetFileSystemEntries(dir.FullName).Length == 0 && removeEmptyDirs)
+				{
+					if (!isSimulation)
+					{
+						Directory.Delete(dir.FullName);
+					}
+
+					logger.AppendLine($"Deleting directory {dir.FullName}");
+					Interlocked.Increment(ref delDirsCount);
+					Interlocked.Increment(ref totalDirsCount);
+				}
+			});
+
+			foreach (FileInfo file in di.EnumerateFiles(mask, SearchOption.AllDirectories))
+			{
+				if (file.LastWriteTime.Date < nowDate.Date)
+				{
+					try
+					{
+						if (!isSimulation)
+						{
+							file.Delete();
+						}
+
+						logger.AppendLine($"Deleting {file.FullName}");
+						Interlocked.Increment(ref delFilesCount);
+						Interlocked.Increment(ref totalFilesCount);
+					}
+					catch (System.IO.IOException ex)
+					{
+						logger.AppendLine($"IOException: {ex}");
+					}
+					catch (Exception ex)
+					{
+						logger.AppendLine($"Unhandled Exception: {ex}");
+					}
+				}
+			}
+
+			return new ProcessDirResult { RemovedFilesCount = delFilesCount, RemovedDirsCount = delDirsCount };
+		}
+	}
+
+	public class ProcessDirResult
+	{
+		public int RemovedFilesCount { get; set; }
+		public int RemovedDirsCount { get; set; }
+	}
 }
