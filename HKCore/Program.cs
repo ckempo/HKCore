@@ -66,6 +66,11 @@ namespace HKCore
 			Console.WriteLine("     {0} files removed ", totalFilesCount);
 			Console.WriteLine("     {0} directories removed", totalDirsCount);
 			Console.WriteLine("     Took {0} seconds", stopwatch.Elapsed.Seconds.ToString());
+
+			if (isSimulation)
+			{
+				Console.WriteLine("(Simulation mode was ENABLED; nothing was deleted really.)");
+			}
 		}
 
 		private static ProcessDirResult ProcessDir(DirectoryConfig dirConf, StringBuilder logger)
