@@ -4,15 +4,16 @@ using System.IO;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using HKCore.Model;
 using Microsoft.Extensions.Configuration;
 
 namespace HKCore
 {
 	internal class Program
 	{
-		private static int totalFilesCount = 0;
-		private static int totalDirsCount = 0;
-		private static bool isSimulation = false;
+		private static int totalFilesCount;
+		private static int totalDirsCount;
+		private static bool isSimulation;
 
 		private static void Main(string[] args)
 		{
@@ -34,7 +35,7 @@ namespace HKCore
 			var stopwatch = new Stopwatch();
 			stopwatch.Start();
 
-			Parallel.ForEach<DirectoryConfig>(appConfig.DirectoryConfig, dirConfig =>
+			Parallel.ForEach(appConfig.DirectoryConfig, dirConfig =>
 			{
 				var logger = new StringBuilder();
 				var fileCount = 0;
@@ -127,7 +128,7 @@ namespace HKCore
 						Interlocked.Increment(ref delFilesCount);
 						Interlocked.Increment(ref totalFilesCount);
 					}
-					catch (System.IO.IOException ex)
+					catch (IOException ex)
 					{
 						logger.AppendLine($"IOException: {ex}");
 					}
@@ -140,11 +141,5 @@ namespace HKCore
 
 			return new ProcessDirResult { RemovedFilesCount = delFilesCount, RemovedDirsCount = delDirsCount };
 		}
-	}
-
-	public class ProcessDirResult
-	{
-		public int RemovedFilesCount { get; set; }
-		public int RemovedDirsCount { get; set; }
 	}
 }
