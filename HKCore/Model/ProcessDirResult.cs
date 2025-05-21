@@ -2,7 +2,7 @@
 {
     public class ProcessDirResult
     {
-        public int RemovedFilesCount { get; set; }
-        public int RemovedDirsCount { get; set; }
+        public int RemovedFilesCount { get; init; }
+        public int RemovedDirsCount { get; init; }
     }
 }
