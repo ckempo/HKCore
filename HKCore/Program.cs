@@ -97,49 +97,51 @@ namespace HKCore
             var nowDate = DateTime.Now;
             var di = new DirectoryInfo(dirPath);
 
-            Parallel.ForEach(di.GetDirectories(), dir =>
+            if (doSubDirs)
             {
-                var result = ProcessDir(dir.FullName, mask, daysToKeep, doSubDirs, removeEmptyDirs, logger);
-                Interlocked.Add(ref delFilesCount, result.RemovedFilesCount);
-                Interlocked.Add(ref delDirsCount, result.RemovedDirsCount);
-
-                //Don't leave behind empty dirs if configured to remove them
-                if (Directory.GetFileSystemEntries(dir.FullName).Length == 0 && removeEmptyDirs)
+                Parallel.ForEach(di.GetDirectories(), dir =>
                 {
-                    if (!_isSimulation)
-                    {
-                        Directory.Delete(dir.FullName);
-                    }
-
-                    logger.AppendLine($"Deleting directory {dir.FullName}");
-                    Interlocked.Increment(ref delDirsCount);
-                    Interlocked.Increment(ref _totalDirsCount);
-                }
-            });
-
-            foreach (var file in di.EnumerateFiles(mask, SearchOption.AllDirectories))
-            {
-                if (file.LastWriteTime.Date < nowDate.Date)
-                {
-                    try
+                    var result = ProcessDir(dir.FullName, mask, daysToKeep, doSubDirs, removeEmptyDirs, logger);
+                    Interlocked.Add(ref delFilesCount, result.RemovedFilesCount);
+                    Interlocked.Add(ref delDirsCount, result.RemovedDirsCount);
+                    //Don't leave behind empty dirs if configured to remove them
+                    if (Directory.GetFileSystemEntries(dir.FullName).Length == 0 && removeEmptyDirs)
                     {
                         if (!_isSimulation)
                         {
-                            file.Delete();
+                            Directory.Delete(dir.FullName);
                         }
 
-                        logger.AppendLine($"Deleting {file.FullName}");
-                        Interlocked.Increment(ref delFilesCount);
-                        Interlocked.Increment(ref _totalFilesCount);
+                        logger.AppendLine($"Deleting directory {dir.FullName}");
+                        Interlocked.Increment(ref delDirsCount);
+                        Interlocked.Increment(ref _totalDirsCount);
                     }
-                    catch (IOException ex)
+                });
+            }
+
+            foreach (var file in di.EnumerateFiles(mask, SearchOption.AllDirectories))
+            {
+                if (file.LastWriteTime.Date >= nowDate.AddDays(-daysToKeep)) 
+                    continue;
+                
+                try
+                {
+                    if (!_isSimulation)
                     {
-                        logger.AppendLine($"IOException: {ex}");
+                        file.Delete();
                     }
-                    catch (Exception ex)
-                    {
-                        logger.AppendLine($"Unhandled Exception: {ex}");
-                    }
+
+                    logger.AppendLine($"Deleting {file.FullName}");
+                    Interlocked.Increment(ref delFilesCount);
+                    Interlocked.Increment(ref _totalFilesCount);
+                }
+                catch (IOException ex)
+                {
+                    logger.AppendLine($"IOException: {ex}");
+                }
+                catch (Exception ex)
+                {
+                    logger.AppendLine($"Unhandled Exception: {ex}");
                 }
             }
 
