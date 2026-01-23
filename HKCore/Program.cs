@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -15,6 +16,7 @@ namespace HKCore
         private static int _totalFilesCount;
         private static int _totalDirsCount;
         private static bool _isSimulation;
+        private static readonly Lock _logLock = new Lock();
 
         private static void Main(string[] args)
         {
@@ -97,33 +99,25 @@ namespace HKCore
             var nowDate = DateTime.Now;
             var di = new DirectoryInfo(dirPath);
 
+            if (!di.Exists) return new ProcessDirResult();
+            
             if (doSubDirs)
             {
+                // Using Parallel only if we aren't already too deep to avoid thread exhaustion
                 Parallel.ForEach(di.GetDirectories(), dir =>
                 {
                     var result = ProcessDir(dir.FullName, mask, daysToKeep, doSubDirs, removeEmptyDirs, logger);
                     Interlocked.Add(ref delFilesCount, result.RemovedFilesCount);
                     Interlocked.Add(ref delDirsCount, result.RemovedDirsCount);
-                    //Don't leave behind empty dirs if configured to remove them
-                    if (Directory.GetFileSystemEntries(dir.FullName).Length == 0 && removeEmptyDirs)
-                    {
-                        if (!_isSimulation)
-                        {
-                            Directory.Delete(dir.FullName);
-                        }
-
-                        logger.AppendLine($"Deleting directory {dir.FullName}");
-                        Interlocked.Increment(ref delDirsCount);
-                        Interlocked.Increment(ref _totalDirsCount);
-                    }
                 });
             }
 
-            foreach (var file in di.EnumerateFiles(mask, SearchOption.AllDirectories))
+            // Process files in THIS directory only (prevents redundant scans)
+            foreach (var file in di.EnumerateFiles(mask, SearchOption.TopDirectoryOnly))
             {
-                if (file.LastWriteTime.Date >= nowDate.AddDays(-daysToKeep)) 
+                if (file.LastWriteTime.Date >= nowDate.AddDays(-daysToKeep))
                     continue;
-                
+
                 try
                 {
                     if (!_isSimulation)
@@ -131,17 +125,52 @@ namespace HKCore
                         file.Delete();
                     }
 
-                    logger.AppendLine($"Deleting {file.FullName}");
+                    lock (_logLock)
+                    {
+                        logger.AppendLine($"Deleting {file.FullName}");
+                    }
+
                     Interlocked.Increment(ref delFilesCount);
                     Interlocked.Increment(ref _totalFilesCount);
                 }
-                catch (IOException ex)
+                catch (Exception ex)
                 {
-                    logger.AppendLine($"IOException: {ex}");
+                    lock (_logLock)
+                    {
+                        logger.AppendLine($"Error deleting file {file.Name}: {ex.Message}");
+                    }
+                }
+            }
+
+            // Delete this directory if config says we should and it's now empty
+            if (removeEmptyDirs && dirPath != di.Root.FullName)
+            {
+                try
+                {
+                    // Re-check directory content after file deletion
+                    if (!Directory.EnumerateFileSystemEntries(dirPath).Any())
+                    {
+                        if (!_isSimulation)
+                        {
+                            Directory.Delete(dirPath);
+                        }
+
+                        lock (_logLock)
+                        {
+                            logger.AppendLine($"Deleting empty directory {dirPath}");
+                        }
+
+                        Interlocked.Increment(ref delDirsCount);
+                        Interlocked.Increment(ref _totalDirsCount);
+                    }
                 }
                 catch (Exception ex)
                 {
-                    logger.AppendLine($"Unhandled Exception: {ex}");
+                    // Directory might not be empty due to hidden files or race conditions
+                    lock (_logLock)
+                    {
+                        logger.AppendLine($"Could not delete dir {dirPath}: {ex.Message}");
+                    }
                 }
             }
 
